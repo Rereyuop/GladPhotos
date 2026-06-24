@@ -63,21 +63,13 @@ struct PhotoGridView: View {
     @State private var latestSectionOffsets: [Date: CGFloat] = [:]
     @State private var activeDayThrottleTask: Task<Void, Never>?
     @State private var activeDayOffsetGeneration = 0
-    @State private var visibleAssetIdentifiers = Set<String>()
-    @State private var preheatedBuckets: [ThumbnailPreheatBucketKey: Set<String>] = [:]
-    @State private var preheatUpdateTask: Task<Void, Never>?
-    @State private var preheatGeneration = 0
-    @State private var lastVisibleWindow: ClosedRange<Int>?
-    @State private var recentScrollDirection: PreheatScrollDirection = .forward
+    @State private var preheatCoordinator = PhotoGridPreheatCoordinator()
 
     // The calendar follows section titles crossing this line. Keeping the line
     // below the top edge makes short adjacent sections behave naturally.
     private let activeDayReferenceY: CGFloat = 80
     private let activeDayHysteresis: CGFloat = 12
     private let activeDayOffsetThrottleDelay: Duration = .milliseconds(120)
-    private let preheatUpdateDelay: Duration = .milliseconds(150)
-    private let preheatMaximumAssetCount = 160
-    private let estimatedVisibleRows = 4
 
     private var columns: [GridItem] {
         [
@@ -203,10 +195,18 @@ struct PhotoGridView: View {
                 }
                 .pointingHandCursor()
             }
+            .onAppear {
+                preheatCoordinator.configure(
+                    imageService: imageService,
+                    assets: assets,
+                    displayMode: displayMode,
+                    thumbnailWidth: thumbnailWidth
+                )
+            }
             .onChange(of: assets) {
                 let currentIdentifiers = Set(assets.map(\.localIdentifier))
                 selectedIdentifiers.formIntersection(currentIdentifiers)
-                resetThumbnailPreheating()
+                preheatCoordinator.replaceAssets(assets)
 
                 if assets.isEmpty {
                     isSelecting = false
@@ -215,19 +215,25 @@ struct PhotoGridView: View {
             }
             .onChange(of: daySectionIDs) {
                 resetActiveDayOffsetTracking()
-                resetThumbnailPreheating()
+                preheatCoordinator.resetPreheating(resetDiagnostics: true)
             }
             .onChange(of: displayMode) {
-                resetThumbnailPreheating()
+                preheatCoordinator.updateRenderingConfiguration(
+                    displayMode: displayMode,
+                    thumbnailWidth: thumbnailWidth
+                )
             }
             .onChange(of: thumbnailWidth) {
-                resetThumbnailPreheating()
+                preheatCoordinator.updateRenderingConfiguration(
+                    displayMode: displayMode,
+                    thumbnailWidth: thumbnailWidth
+                )
             }
             .onDisappear {
                 activeDaySyncTask?.cancel()
                 activeDaySyncTask = nil
                 resetActiveDayOffsetTracking()
-                resetThumbnailPreheating()
+                preheatCoordinator.resetPreheating(resetDiagnostics: true)
             }
         }
     }
@@ -308,6 +314,7 @@ struct PhotoGridView: View {
             imageService: imageService,
             displayMode: displayMode,
             thumbnailWidth: thumbnailWidth,
+            preheatCoordinator: preheatCoordinator,
             isSelected: selectedIdentifiers.contains(item.localIdentifier),
             showsPhotoInfo: showsPhotoInfo,
             openDetail: {
@@ -319,15 +326,8 @@ struct PhotoGridView: View {
             },
             locateInApplePhotos: {
                 locateInApplePhotos(item)
-            },
-            appeared: {
-                thumbnailCellAppeared(item.localIdentifier)
-            },
-            disappeared: {
-                thumbnailCellDisappeared(item.localIdentifier)
             }
         )
-        .equatable()
     }
 
     private var gridContent: some View {
@@ -677,349 +677,6 @@ struct PhotoGridView: View {
         }
     }
 
-    private func thumbnailCellAppeared(_ identifier: String) {
-        visibleAssetIdentifiers.insert(identifier)
-        scheduleThumbnailPreheatUpdate()
-    }
-
-    private func thumbnailCellDisappeared(_ identifier: String) {
-        visibleAssetIdentifiers.remove(identifier)
-        scheduleThumbnailPreheatUpdate()
-    }
-
-    private func scheduleThumbnailPreheatUpdate() {
-        guard !assets.isEmpty else {
-            resetThumbnailPreheating()
-            return
-        }
-
-        preheatGeneration += 1
-        let generation = preheatGeneration
-
-        guard preheatUpdateTask == nil else {
-            return
-        }
-
-        preheatUpdateTask = Task { @MainActor in
-            try? await Task.sleep(for: preheatUpdateDelay)
-            guard !Task.isCancelled else {
-                return
-            }
-
-            processThumbnailPreheatUpdate(generation: generation)
-        }
-    }
-
-    private func processThumbnailPreheatUpdate(generation: Int) {
-        preheatUpdateTask = nil
-
-        guard generation == preheatGeneration else {
-            scheduleThumbnailPreheatUpdate()
-            return
-        }
-
-        updateThumbnailPreheatWindow()
-    }
-
-    private func updateThumbnailPreheatWindow() {
-        let assetIndexByIdentifier = Dictionary(
-            uniqueKeysWithValues: assets.enumerated().map { index, item in
-                (item.localIdentifier, index)
-            }
-        )
-        let visibleIndexes = visibleAssetIdentifiers.compactMap {
-            assetIndexByIdentifier[$0]
-        }
-
-        guard let visibleStart = visibleIndexes.min(),
-              let visibleEnd = visibleIndexes.max()
-        else {
-            stopCurrentThumbnailPreheating(resetDiagnostics: false)
-            return
-        }
-
-        let visibleWindow = visibleStart...visibleEnd
-        updateRecentScrollDirection(visibleWindow)
-        lastVisibleWindow = visibleWindow
-
-        let columnsPerRow = max(1, Int((thumbnailWidth * 1.5) / thumbnailWidth))
-        let estimatedScreenAssetCount = max(
-            visibleEnd - visibleStart + 1,
-            columnsPerRow * estimatedVisibleRows
-        )
-        let backwardCount = min(estimatedScreenAssetCount, 60)
-        let forwardCount = min(estimatedScreenAssetCount * 2, 100)
-        let windowStart: Int
-        let windowEnd: Int
-
-        switch recentScrollDirection {
-        case .forward:
-            windowStart = max(0, visibleStart - backwardCount)
-            windowEnd = min(assets.count - 1, visibleEnd + forwardCount)
-        case .backward:
-            windowStart = max(0, visibleStart - forwardCount)
-            windowEnd = min(assets.count - 1, visibleEnd + backwardCount)
-        }
-
-        let windowItems = Array(assets[windowStart...windowEnd])
-        let limitedItems = limitedPreheatItems(
-            windowItems,
-            visibleIdentifiers: visibleAssetIdentifiers,
-            visibleWindow: visibleWindow,
-            assetIndexByIdentifier: assetIndexByIdentifier
-        )
-        let newBuckets = thumbnailPreheatBuckets(for: limitedItems)
-
-        applyThumbnailPreheatBuckets(newBuckets)
-    }
-
-    private func updateRecentScrollDirection(_ visibleWindow: ClosedRange<Int>) {
-        guard let lastVisibleWindow else {
-            return
-        }
-
-        let previousMidpoint = (lastVisibleWindow.lowerBound + lastVisibleWindow.upperBound) / 2
-        let newMidpoint = (visibleWindow.lowerBound + visibleWindow.upperBound) / 2
-
-        if newMidpoint > previousMidpoint {
-            recentScrollDirection = .forward
-        } else if newMidpoint < previousMidpoint {
-            recentScrollDirection = .backward
-        }
-    }
-
-    private func limitedPreheatItems(
-        _ windowItems: [PhotoAssetItem],
-        visibleIdentifiers: Set<String>,
-        visibleWindow: ClosedRange<Int>,
-        assetIndexByIdentifier: [String: Int]
-    ) -> [PhotoAssetItem] {
-        guard windowItems.count > preheatMaximumAssetCount else {
-            return windowItems
-        }
-
-        return windowItems.sorted { lhs, rhs in
-            preheatPriority(
-                for: lhs,
-                visibleIdentifiers: visibleIdentifiers,
-                visibleWindow: visibleWindow,
-                assetIndexByIdentifier: assetIndexByIdentifier
-            ) < preheatPriority(
-                for: rhs,
-                visibleIdentifiers: visibleIdentifiers,
-                visibleWindow: visibleWindow,
-                assetIndexByIdentifier: assetIndexByIdentifier
-            )
-        }
-        .prefix(preheatMaximumAssetCount)
-        .map { $0 }
-    }
-
-    private func preheatPriority(
-        for item: PhotoAssetItem,
-        visibleIdentifiers: Set<String>,
-        visibleWindow: ClosedRange<Int>,
-        assetIndexByIdentifier: [String: Int]
-    ) -> Int {
-        guard let index = assetIndexByIdentifier[item.localIdentifier] else {
-            return Int.max
-        }
-
-        if visibleIdentifiers.contains(item.localIdentifier) {
-            return index - visibleWindow.lowerBound
-        }
-
-        switch recentScrollDirection {
-        case .forward:
-            if index > visibleWindow.upperBound {
-                return 1_000 + index - visibleWindow.upperBound
-            }
-            return 10_000 + visibleWindow.lowerBound - index
-        case .backward:
-            if index < visibleWindow.lowerBound {
-                return 1_000 + visibleWindow.lowerBound - index
-            }
-            return 10_000 + index - visibleWindow.upperBound
-        }
-    }
-
-    private func thumbnailPreheatBuckets(
-        for items: [PhotoAssetItem]
-    ) -> [ThumbnailPreheatBucketKey: Set<String>] {
-        var buckets: [ThumbnailPreheatBucketKey: Set<String>] = [:]
-
-        for item in items {
-            let configuration = imageService.thumbnailRequestConfiguration(
-                for: item.asset,
-                displayMode: displayMode,
-                thumbnailWidth: thumbnailWidth
-            )
-            let key = ThumbnailPreheatBucketKey(configuration: configuration)
-            buckets[key, default: []].insert(item.localIdentifier)
-        }
-
-        return buckets
-    }
-
-    private func applyThumbnailPreheatBuckets(
-        _ newBuckets: [ThumbnailPreheatBucketKey: Set<String>]
-    ) {
-        let assetByIdentifier = Dictionary(
-            uniqueKeysWithValues: assets.map { ($0.localIdentifier, $0.asset) }
-        )
-        var addedCount = 0
-        var removedCount = 0
-        var startCalls = 0
-        var stopCalls = 0
-
-        for key in Set(preheatedBuckets.keys).union(newBuckets.keys) {
-            let oldIdentifiers = preheatedBuckets[key] ?? []
-            let newIdentifiers = newBuckets[key] ?? []
-            let addedIdentifiers = newIdentifiers.subtracting(oldIdentifiers)
-            let removedIdentifiers = oldIdentifiers.subtracting(newIdentifiers)
-
-            let addedAssets = addedIdentifiers.compactMap { assetByIdentifier[$0] }
-            if !addedAssets.isEmpty {
-                imageService.startCachingThumbnails(
-                    assets: addedAssets,
-                    targetSize: key.targetSize,
-                    contentMode: key.contentMode
-                )
-                addedCount += addedAssets.count
-                startCalls += 1
-            }
-
-            let removedAssets = removedIdentifiers.compactMap { assetByIdentifier[$0] }
-            if !removedAssets.isEmpty {
-                imageService.stopCachingThumbnails(
-                    assets: removedAssets,
-                    targetSize: key.targetSize,
-                    contentMode: key.contentMode
-                )
-                removedCount += removedAssets.count
-                stopCalls += 1
-            }
-        }
-
-        preheatedBuckets = newBuckets
-
-        #if DEBUG
-        ScrollPerformanceDiagnostics.recordPreheatUpdate(
-            addedAssets: addedCount,
-            removedAssets: removedCount,
-            activeAssets: activePreheatedAssetCount,
-            startCalls: startCalls,
-            stopCalls: stopCalls
-        )
-        ScrollPerformanceDiagnostics.updatePreheatedCandidateIdentifiers(
-            Set(newBuckets.values.flatMap { $0 })
-        )
-        #endif
-    }
-
-    private var activePreheatedAssetCount: Int {
-        Set(preheatedBuckets.values.flatMap { $0 }).count
-    }
-
-    private func resetThumbnailPreheating() {
-        preheatGeneration += 1
-        preheatUpdateTask?.cancel()
-        preheatUpdateTask = nil
-        visibleAssetIdentifiers.removeAll()
-        lastVisibleWindow = nil
-        recentScrollDirection = .forward
-        #if DEBUG
-        if preheatedBuckets.isEmpty {
-            ScrollPerformanceDiagnostics.updatePreheatedCandidateIdentifiers([])
-            ScrollPerformanceDiagnostics.recordPreheatWindowReset()
-        }
-        #endif
-        stopCurrentThumbnailPreheating(resetDiagnostics: true)
-    }
-
-    private func stopCurrentThumbnailPreheating(resetDiagnostics: Bool) {
-        guard !preheatedBuckets.isEmpty else {
-            return
-        }
-
-        if resetDiagnostics {
-            let removedCount = activePreheatedAssetCount
-            imageService.stopCachingAllThumbnails()
-            preheatedBuckets = [:]
-
-            #if DEBUG
-            ScrollPerformanceDiagnostics.recordPreheatUpdate(
-                addedAssets: 0,
-                removedAssets: removedCount,
-                activeAssets: 0,
-                startCalls: 0,
-                stopCalls: 1
-            )
-            ScrollPerformanceDiagnostics.updatePreheatedCandidateIdentifiers([])
-            ScrollPerformanceDiagnostics.recordPreheatWindowReset()
-            #endif
-            return
-        }
-
-        let assetByIdentifier = Dictionary(
-            uniqueKeysWithValues: assets.map { ($0.localIdentifier, $0.asset) }
-        )
-        var removedCount = 0
-        var stopCalls = 0
-
-        for (key, identifiers) in preheatedBuckets {
-            let removedAssets = identifiers.compactMap { assetByIdentifier[$0] }
-            guard !removedAssets.isEmpty else {
-                continue
-            }
-
-            imageService.stopCachingThumbnails(
-                assets: removedAssets,
-                targetSize: key.targetSize,
-                contentMode: key.contentMode
-            )
-            removedCount += removedAssets.count
-            stopCalls += 1
-        }
-
-        preheatedBuckets = [:]
-
-        #if DEBUG
-        ScrollPerformanceDiagnostics.recordPreheatUpdate(
-            addedAssets: 0,
-            removedAssets: removedCount,
-            activeAssets: 0,
-            startCalls: 0,
-            stopCalls: stopCalls
-        )
-        ScrollPerformanceDiagnostics.updatePreheatedCandidateIdentifiers([])
-        #endif
-    }
-}
-
-private enum PreheatScrollDirection {
-    case forward
-    case backward
-}
-
-private struct ThumbnailPreheatBucketKey: Hashable {
-    let width: Int
-    let height: Int
-    let contentModeRawValue: Int
-
-    var targetSize: CGSize {
-        CGSize(width: width, height: height)
-    }
-
-    var contentMode: PHImageContentMode {
-        PHImageContentMode(rawValue: contentModeRawValue) ?? .aspectFill
-    }
-
-    init(configuration: PhotoThumbnailRequestConfiguration) {
-        width = Int(configuration.targetSize.width.rounded())
-        height = Int(configuration.targetSize.height.rounded())
-        contentModeRawValue = configuration.contentMode.rawValue
-    }
 }
 
 private struct PhotoSectionSelectionHeader: View {

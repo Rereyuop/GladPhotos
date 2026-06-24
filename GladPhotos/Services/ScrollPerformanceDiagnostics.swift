@@ -38,6 +38,11 @@ enum ScrollPerformanceDiagnostics {
     private static var preheatStartCalls = 0
     private static var preheatStopCalls = 0
     private static var preheatWindowResets = 0
+    private static var preheatVisibleEventCount = 0
+    private static var preheatParentViewStateMutations = 0
+    private static var preheatIndexRebuildCount = 0
+    private static var preheatComputationCount = 0
+    private static var preheatWindowUnchangedSkips = 0
     private static var thumbnailRequestPreheatedCandidate = 0
     private static var preheatedCandidateIdentifiers = Set<String>()
     private static var inflightRequests: [PHImageRequestID: String] = [:]
@@ -86,6 +91,11 @@ enum ScrollPerformanceDiagnostics {
         preheatStartCalls = 0
         preheatStopCalls = 0
         preheatWindowResets = 0
+        preheatVisibleEventCount = 0
+        preheatParentViewStateMutations = 0
+        preheatIndexRebuildCount = 0
+        preheatComputationCount = 0
+        preheatWindowUnchangedSkips = 0
         thumbnailRequestPreheatedCandidate = 0
         preheatedCandidateIdentifiers = []
         inflightRequests = [:]
@@ -209,6 +219,31 @@ enum ScrollPerformanceDiagnostics {
         preheatWindowResets += 1
     }
 
+    static func recordPreheatVisibleEvent() {
+        guard isEnabled else { return }
+        preheatVisibleEventCount += 1
+    }
+
+    static func recordPreheatParentViewStateMutation() {
+        guard isEnabled else { return }
+        preheatParentViewStateMutations += 1
+    }
+
+    static func recordPreheatIndexRebuild() {
+        guard isEnabled else { return }
+        preheatIndexRebuildCount += 1
+    }
+
+    static func recordPreheatComputation() {
+        guard isEnabled else { return }
+        preheatComputationCount += 1
+    }
+
+    static func recordPreheatWindowUnchangedSkip() {
+        guard isEnabled else { return }
+        preheatWindowUnchangedSkips += 1
+    }
+
     static func recordThumbnailRequestCancelled(_ requestID: PHImageRequestID?) {
         guard isEnabled, let requestID else { return }
         guard let key = inflightRequests.removeValue(forKey: requestID) else {
@@ -327,6 +362,11 @@ enum ScrollPerformanceDiagnostics {
             preheat_start_calls=\(preheatStartCalls)
             preheat_stop_calls=\(preheatStopCalls)
             preheat_window_resets=\(preheatWindowResets)
+            preheat_visible_event_count=\(preheatVisibleEventCount)
+            preheat_parent_view_state_mutations=\(preheatParentViewStateMutations)
+            preheat_index_rebuild_count=\(preheatIndexRebuildCount)
+            preheat_computation_count=\(preheatComputationCount)
+            preheat_window_unchanged_skips=\(preheatWindowUnchangedSkips)
             thumbnail_request_preheated_candidate=\(thumbnailRequestPreheatedCandidate)
             target_size_distribution=\(targetSizes.isEmpty ? "none" : targetSizes)
             """
