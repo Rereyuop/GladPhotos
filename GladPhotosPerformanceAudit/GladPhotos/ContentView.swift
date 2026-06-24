@@ -23,11 +23,10 @@ struct ContentView: View {
     @State private var externalItemsByFolder: [UUID: [ExternalMediaItem]] = [:]
     @State private var scrollRequestID = UUID()
     @State private var externalFolderError: String?
-    @State private var appleAssetsSignature: PhotoAssetCollectionSignature = .empty
-    @State private var appleDaySections: [PhotoDaySection] = []
-    @State private var appleUndatedAssets: [PhotoAssetItem] = []
-    @State private var appleDaySectionIDs: [Date] = []
-    @State private var appleDaySectionIndexByID: [Date: Int] = [:]
+
+    private var daySections: [PhotoDaySection] {
+        PhotoDaySection.make(from: photoLibrary.assets)
+    }
 
     private var currentDateIndex: MediaDateIndex {
         dateIndexes[selection] ?? .empty
@@ -56,16 +55,12 @@ struct ContentView: View {
         }
         .task {
             await photoLibrary.checkAuthorization()
-            updateAppleGridCacheIfNeeded()
             updateAppleDateIndex()
             reconcileDateSelection(for: .appleLibrary)
         }
         .onChange(of: photoLibrary.allAssets) {
             updateAppleDateIndex()
             reconcileDateSelection(for: .appleLibrary)
-        }
-        .onChange(of: photoLibrary.assetsSignature) {
-            updateAppleGridCacheIfNeeded()
         }
         .alert("外部文件夹操作失败", isPresented: externalFolderErrorBinding) {
             Button("好", role: .cancel) { externalFolderError = nil }
@@ -121,10 +116,7 @@ struct ContentView: View {
             PhotoGridView(
                 assets: photoLibrary.assets,
                 imageService: imageService,
-                daySections: appleDaySections,
-                undatedAssets: appleUndatedAssets,
-                daySectionIDs: appleDaySectionIDs,
-                daySectionIndexByID: appleDaySectionIndexByID,
+                daySections: daySections,
                 title: navigationTitle,
                 emptyTitle: emptyTitle,
                 monthDate: selectedMonthFilter,
@@ -256,26 +248,6 @@ struct ContentView: View {
     private func updateAppleDateIndex() {
         dateIndexes[.appleLibrary] = MediaDateIndex(
             dates: photoLibrary.allAssets.compactMap(\.asset.creationDate)
-        )
-    }
-
-    private func updateAppleGridCacheIfNeeded() {
-        let signature = photoLibrary.assetsSignature
-        guard appleAssetsSignature != signature else {
-            return
-        }
-
-        let assets = photoLibrary.assets
-        let sections = PhotoDaySection.make(from: assets)
-        let sectionIDs = sections.map(\.id)
-        appleAssetsSignature = signature
-        appleDaySections = sections
-        appleUndatedAssets = assets.filter { $0.asset.creationDate == nil }
-        appleDaySectionIDs = sectionIDs
-        appleDaySectionIndexByID = Dictionary(
-            uniqueKeysWithValues: sectionIDs.enumerated().map { index, id in
-                (id, index)
-            }
         )
     }
 

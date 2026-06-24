@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Xcode personal settings
+xcuserdata/
+*.xcuserstate
+
+# Build files
+DerivedData/
+build/
+.build/
+
+# Archives and packages
+*.xcarchive
+*.dmg
+
+# Signing and secrets
+*.p12
+*.mobileprovision
+.env
+.env.*
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
