@@ -27,6 +27,8 @@ struct PhotoThumbnailView: View {
     @State private var image: NSImage?
     @State private var requestID: PHImageRequestID?
     @State private var requestedIdentifier: String?
+    @State private var imageRequestToken: UUID?
+    @State private var pendingDegradedImageTask: Task<Void, Never>?
     @State private var resourceSizeRequestID: UUID?
     @State private var resourceSize: Int64?
     @State private var isResourceSizeUnavailable = false
@@ -42,11 +44,17 @@ struct PhotoThumbnailView: View {
         }
         .contentShape(Rectangle())
         .onAppear {
+            #if DEBUG
+            ScrollPerformanceDiagnostics.recordCellAppear()
+            #endif
             isVisible = true
             requestImage()
             requestResourceSizeIfNeeded()
         }
         .onDisappear {
+            #if DEBUG
+            ScrollPerformanceDiagnostics.recordCellDisappear()
+            #endif
             isVisible = false
             cancelRequest()
             cancelResourceSizeRequest()
@@ -181,7 +189,10 @@ struct PhotoThumbnailView: View {
 
     private func requestImage() {
         let identifier = item.localIdentifier
+        let requestToken = UUID()
         requestedIdentifier = identifier
+        imageRequestToken = requestToken
+        cancelPendingDegradedImage()
 
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         let targetSize: CGSize
@@ -202,12 +213,30 @@ struct PhotoThumbnailView: View {
             for: item.asset,
             targetSize: targetSize,
             contentMode: displayMode == .square ? .aspectFill : .aspectFit
-        ) { returnedIdentifier, returnedImage in
-            guard requestedIdentifier == returnedIdentifier else {
+        ) { returnedIdentifier, returnedImage, isDegraded in
+            guard requestedIdentifier == returnedIdentifier,
+                  imageRequestToken == requestToken,
+                  isVisible else {
                 return
             }
 
+            if isDegraded {
+                #if DEBUG
+                ScrollPerformanceDiagnostics.recordThumbnailDegradedReceived()
+                #endif
+                scheduleDegradedImageCommit(
+                    returnedImage,
+                    identifier: returnedIdentifier,
+                    requestToken: requestToken
+                )
+                return
+            }
+
+            cancelPendingDegradedImage(suppressedByFinal: true)
             image = returnedImage
+            #if DEBUG
+            ScrollPerformanceDiagnostics.recordThumbnailFinalCommittedToUI()
+            #endif
         }
     }
 
@@ -215,6 +244,45 @@ struct PhotoThumbnailView: View {
         imageService.cancelRequest(requestID)
         requestID = nil
         requestedIdentifier = nil
+        imageRequestToken = nil
+        cancelPendingDegradedImage()
+    }
+
+    private func scheduleDegradedImageCommit(
+        _ degradedImage: NSImage?,
+        identifier: String,
+        requestToken: UUID
+    ) {
+        cancelPendingDegradedImage()
+        pendingDegradedImageTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 70_000_000)
+            guard !Task.isCancelled,
+                  requestedIdentifier == identifier,
+                  imageRequestToken == requestToken,
+                  isVisible else {
+                return
+            }
+
+            image = degradedImage
+            pendingDegradedImageTask = nil
+            #if DEBUG
+            ScrollPerformanceDiagnostics.recordThumbnailDegradedCommittedToUI()
+            #endif
+        }
+    }
+
+    private func cancelPendingDegradedImage(suppressedByFinal: Bool = false) {
+        guard let pendingDegradedImageTask else {
+            return
+        }
+
+        pendingDegradedImageTask.cancel()
+        self.pendingDegradedImageTask = nil
+        #if DEBUG
+        if suppressedByFinal {
+            ScrollPerformanceDiagnostics.recordThumbnailDegradedSuppressedByFinal()
+        }
+        #endif
     }
 
     private func requestResourceSizeIfNeeded() {

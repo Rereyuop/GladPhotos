@@ -9,7 +9,6 @@ struct PhotoDaySection: Identifiable {
 
     @MainActor
     static func make(from assets: [PhotoAssetItem]) -> [PhotoDaySection] {
-        let start = ContinuousClock.now
         let calendar = Calendar.current
         let datedAssets = assets.filter { $0.asset.creationDate != nil }
         let groupedAssets = Dictionary(grouping: datedAssets) { item in
@@ -26,14 +25,6 @@ struct PhotoDaySection: Identifiable {
             )
         }
         .sorted { $0.date < $1.date }
-
-        #if DEBUG
-        PhotoGridDebugMetrics.logDaySectionMake(
-            assetCount: assets.count,
-            sectionCount: sections.count,
-            duration: start.duration(to: ContinuousClock.now)
-        )
-        #endif
 
         return sections
     }
@@ -121,7 +112,9 @@ struct PhotoGridView: View {
                         }
                         .onPreferenceChange(SectionHeaderOffsetKey.self) { offsets in
                             #if DEBUG
-                            PhotoGridDebugMetrics.recordOffsetPreferenceCallback()
+                            ScrollPerformanceDiagnostics.recordSectionOffsetPreference(
+                                valueCount: offsets.count
+                            )
                             #endif
                             updateActiveDay(from: offsets)
                         }
@@ -434,7 +427,7 @@ struct PhotoGridView: View {
         if activeDay != target {
             activeDay = target
             #if DEBUG
-            PhotoGridDebugMetrics.recordActiveDayWrite()
+            ScrollPerformanceDiagnostics.recordVisibleDatePublished()
             #endif
         }
 
@@ -517,7 +510,7 @@ struct PhotoGridView: View {
 
         scrollCandidateDay = candidate
         #if DEBUG
-        PhotoGridDebugMetrics.recordCandidateChange()
+        ScrollPerformanceDiagnostics.recordVisibleDateCandidate()
         #endif
 
         activeDaySyncTask?.cancel()
@@ -534,7 +527,7 @@ struct PhotoGridView: View {
 
             activeDay = candidate
             #if DEBUG
-            PhotoGridDebugMetrics.recordActiveDayWrite()
+            ScrollPerformanceDiagnostics.recordVisibleDatePublished()
             #endif
         }
     }
@@ -698,60 +691,6 @@ private struct ActiveDayCandidateTracker {
         }
     }
 }
-
-#if DEBUG
-@MainActor
-private enum PhotoGridDebugMetrics {
-    private static var makeCallCount = 0
-    private static var offsetCallbackCount = 0
-    private static var candidateChangeCount = 0
-    private static var activeDayWriteCount = 0
-    private static var offsetWindowStart = Date()
-
-    static func logDaySectionMake(
-        assetCount: Int,
-        sectionCount: Int,
-        duration: Duration
-    ) {
-        makeCallCount += 1
-        print(
-            "DEBUG PhotoDaySection.make calls=\(makeCallCount) assets=\(assetCount) sections=\(sectionCount) ms=\(duration.debugMilliseconds)"
-        )
-    }
-
-    static func recordOffsetPreferenceCallback() {
-        offsetCallbackCount += 1
-        let now = Date()
-        guard now.timeIntervalSince(offsetWindowStart) >= 1 else {
-            return
-        }
-
-        print(
-            "DEBUG PhotoGrid offsetPreference callbacksPerSecond=\(offsetCallbackCount) candidateChanges=\(candidateChangeCount) activeDayWrites=\(activeDayWriteCount)"
-        )
-        offsetCallbackCount = 0
-        candidateChangeCount = 0
-        activeDayWriteCount = 0
-        offsetWindowStart = now
-    }
-
-    static func recordCandidateChange() {
-        candidateChangeCount += 1
-    }
-
-    static func recordActiveDayWrite() {
-        activeDayWriteCount += 1
-    }
-}
-
-private extension Duration {
-    var debugMilliseconds: String {
-        let milliseconds = Double(components.seconds) * 1_000
-            + Double(components.attoseconds) / 1e15
-        return String(format: "%.2f", milliseconds)
-    }
-}
-#endif
 
 private struct SectionHeaderOffsetKey: PreferenceKey {
     static var defaultValue: [Date: CGFloat] = [:]

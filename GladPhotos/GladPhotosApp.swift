@@ -32,6 +32,37 @@ private struct PhotoGridCommands: Commands {
             .keyboardShortcut("-", modifiers: .command)
             .disabled((thumbnailWidth ?? 64) <= 64)
         }
+
+        #if DEBUG
+        CommandMenu("滚动诊断") {
+            Button("启用滚动诊断") {
+                Task { @MainActor in
+                    ScrollPerformanceDiagnostics.setEnabled(true)
+                    ScrollPerformanceDiagnostics.reset(reason: "enabled")
+                }
+            }
+
+            Button("关闭滚动诊断") {
+                Task { @MainActor in
+                    ScrollPerformanceDiagnostics.setEnabled(false)
+                }
+            }
+
+            Button("重置滚动诊断场景") {
+                Task { @MainActor in
+                    ScrollPerformanceDiagnostics.reset(reason: "manual")
+                }
+            }
+
+            Button("结束场景并输出摘要") {
+                Task { @MainActor in
+                    ScrollPerformanceDiagnostics.printSummaryAndReset(
+                        reason: "manual-scenario-end"
+                    )
+                }
+            }
+        }
+        #endif
     }
 }
 

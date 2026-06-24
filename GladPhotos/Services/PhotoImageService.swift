@@ -38,7 +38,7 @@ final class PhotoImageService {
         for asset: PHAsset,
         targetSize: CGSize,
         contentMode: PHImageContentMode = .aspectFill,
-        completion: @escaping (String, NSImage?) -> Void
+        completion: @escaping (String, NSImage?, Bool) -> Void
     ) -> PHImageRequestID {
         let identifier = asset.localIdentifier
         let options = PHImageRequestOptions()
@@ -46,16 +46,66 @@ final class PhotoImageService {
         options.resizeMode = .fast
         options.isNetworkAccessAllowed = false
 
+        #if DEBUG
+        guard ScrollPerformanceDiagnostics.isEnabled else {
+            return imageManager.requestImage(
+                for: asset,
+                targetSize: targetSize,
+                contentMode: contentMode,
+                options: options
+            ) { image, info in
+                let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+                Task { @MainActor in
+                    completion(identifier, image, isDegraded)
+                }
+            }
+        }
+
+        let diagnosticKey = ScrollPerformanceDiagnostics.makeThumbnailRequestKey(
+            assetIdentifier: identifier,
+            targetSize: targetSize,
+            contentMode: contentMode
+        )
+        var requestID = PHInvalidImageRequestID
+        requestID = imageManager.requestImage(
+            for: asset,
+            targetSize: targetSize,
+            contentMode: contentMode,
+            options: options
+        ) { image, info in
+            let wasCancelled = (info?[PHImageCancelledKey] as? Bool) == true
+            let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+            let hasError = info?[PHImageErrorKey] != nil
+
+            Task { @MainActor in
+                ScrollPerformanceDiagnostics.recordThumbnailCallback(
+                    requestID: requestID,
+                    isDegraded: isDegraded,
+                    isCancelled: wasCancelled,
+                    hasError: hasError
+                )
+                completion(identifier, image, isDegraded)
+            }
+        }
+        ScrollPerformanceDiagnostics.recordThumbnailRequestStarted(
+            requestID: requestID,
+            key: diagnosticKey,
+            targetSize: targetSize
+        )
+        return requestID
+        #else
         return imageManager.requestImage(
             for: asset,
             targetSize: targetSize,
             contentMode: contentMode,
             options: options
-        ) { image, _ in
+        ) { image, info in
+            let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
             Task { @MainActor in
-                completion(identifier, image)
+                completion(identifier, image, isDegraded)
             }
         }
+        #endif
     }
 
     func requestPreview(
@@ -125,6 +175,9 @@ final class PhotoImageService {
             return
         }
 
+        #if DEBUG
+        ScrollPerformanceDiagnostics.recordThumbnailRequestCancelled(requestID)
+        #endif
         imageManager.cancelImageRequest(requestID)
     }
 
