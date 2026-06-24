@@ -956,6 +956,7 @@ private final class NativePhotoItemView: NSView {
         showsPhotoInfo: Bool,
         resourceSizeText: String
     ) {
+        isHovered = false
         self.image = image
         self.isSelected = isSelected
         self.showsSelectionState = showsSelectionState
@@ -1007,6 +1008,22 @@ private final class NativePhotoItemView: NSView {
         )
         trackingAreaRef = area
         addTrackingArea(area)
+
+        if let window {
+            let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            isHovered = bounds.contains(point)
+        } else {
+            isHovered = false
+        }
+        updateSelectionLayers()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            isHovered = false
+            updateSelectionLayers()
+        }
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -1041,11 +1058,11 @@ private final class NativePhotoItemView: NSView {
 
     private func setup() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.18).cgColor
+        layer?.backgroundColor = NSColor.clear.cgColor
 
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
-        imageView.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.18).cgColor
+        imageView.layer?.backgroundColor = NSColor.clear.cgColor
         placeholder.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 26, weight: .regular)
         placeholder.contentTintColor = .secondaryLabelColor
         liveBadge.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
