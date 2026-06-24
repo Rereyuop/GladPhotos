@@ -93,7 +93,7 @@ struct PhotoThumbnailView: View {
             if let image {
                 Image(nsImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: displayMode == .square ? .fill : .fit)
+                    .scaledToFit()
             } else {
                 Image(systemName: "photo.badge.exclamationmark")
                     .font(.title)
@@ -108,9 +108,8 @@ struct PhotoThumbnailView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .aspectRatio(aspectRatio, contentMode: displayMode == .square ? .fill : .fit)
-        .background(.quaternary.opacity(displayMode == .square ? 0 : 0.35))
-        .clipped()
+        .aspectRatio(4 / 3, contentMode: .fit)
+        .background(.quaternary.opacity(0.35))
     }
 
     private var photoInfo: some View {
@@ -194,25 +193,16 @@ struct PhotoThumbnailView: View {
         imageRequestToken = requestToken
         cancelPendingDegradedImage()
 
-        let scale = NSScreen.main?.backingScaleFactor ?? 2
-        let targetSize: CGSize
-
-        switch displayMode {
-        case .square:
-            let sideLength = thumbnailWidth * 1.5 * scale
-            targetSize = CGSize(width: sideLength, height: sideLength)
-        case .originalRatio:
-            let longestSide = thumbnailWidth * 1.5 * scale
-            let ratio = aspectRatio
-            targetSize = ratio >= 1
-                ? CGSize(width: longestSide, height: longestSide / ratio)
-                : CGSize(width: longestSide * ratio, height: longestSide)
-        }
+        let requestConfiguration = imageService.thumbnailRequestConfiguration(
+            for: item.asset,
+            displayMode: displayMode,
+            thumbnailWidth: thumbnailWidth
+        )
 
         requestID = imageService.requestThumbnail(
             for: item.asset,
-            targetSize: targetSize,
-            contentMode: displayMode == .square ? .aspectFill : .aspectFit
+            targetSize: requestConfiguration.targetSize,
+            contentMode: requestConfiguration.contentMode
         ) { returnedIdentifier, returnedImage, isDegraded in
             guard requestedIdentifier == returnedIdentifier,
                   imageRequestToken == requestToken,

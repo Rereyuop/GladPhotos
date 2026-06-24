@@ -1,6 +1,11 @@
 import AppKit
 import Photos
 
+struct PhotoThumbnailRequestConfiguration {
+    let targetSize: CGSize
+    let contentMode: PHImageContentMode
+}
+
 @MainActor
 final class PhotoImageService {
     private let imageManager = PHCachingImageManager()
@@ -41,10 +46,8 @@ final class PhotoImageService {
         completion: @escaping (String, NSImage?, Bool) -> Void
     ) -> PHImageRequestID {
         let identifier = asset.localIdentifier
-        let options = PHImageRequestOptions()
-        options.deliveryMode = .opportunistic
-        options.resizeMode = .fast
-        options.isNetworkAccessAllowed = false
+        let targetSize = normalizedThumbnailTargetSize(targetSize)
+        let options = thumbnailRequestOptions()
 
         #if DEBUG
         guard ScrollPerformanceDiagnostics.isEnabled else {
@@ -90,7 +93,9 @@ final class PhotoImageService {
         ScrollPerformanceDiagnostics.recordThumbnailRequestStarted(
             requestID: requestID,
             key: diagnosticKey,
-            targetSize: targetSize
+            targetSize: targetSize,
+            isPreheatedCandidate: ScrollPerformanceDiagnostics
+                .isThumbnailPreheatedCandidate(identifier)
         )
         return requestID
         #else
@@ -106,6 +111,76 @@ final class PhotoImageService {
             }
         }
         #endif
+    }
+
+    func thumbnailRequestConfiguration(
+        for asset: PHAsset,
+        displayMode: PhotoGridDisplayMode,
+        thumbnailWidth: CGFloat,
+        scale: CGFloat = NSScreen.main?.backingScaleFactor ?? 2
+    ) -> PhotoThumbnailRequestConfiguration {
+        let targetSize: CGSize
+
+        switch displayMode {
+        case .square:
+            let sideLength = thumbnailWidth * 1.5 * scale
+            targetSize = CGSize(width: sideLength, height: sideLength)
+        case .originalRatio:
+            let longestSide = thumbnailWidth * 1.5 * scale
+            let ratio: CGFloat
+            if asset.pixelHeight > 0 {
+                ratio = CGFloat(asset.pixelWidth) / CGFloat(asset.pixelHeight)
+            } else {
+                ratio = 1
+            }
+
+            targetSize = ratio >= 1
+                ? CGSize(width: longestSide, height: longestSide / ratio)
+                : CGSize(width: longestSide * ratio, height: longestSide)
+        }
+
+        return PhotoThumbnailRequestConfiguration(
+            targetSize: normalizedThumbnailTargetSize(targetSize),
+            contentMode: displayMode == .square ? .aspectFill : .aspectFit
+        )
+    }
+
+    func startCachingThumbnails(
+        assets: [PHAsset],
+        targetSize: CGSize,
+        contentMode: PHImageContentMode
+    ) {
+        guard !assets.isEmpty else {
+            return
+        }
+
+        imageManager.startCachingImages(
+            for: assets,
+            targetSize: normalizedThumbnailTargetSize(targetSize),
+            contentMode: contentMode,
+            options: thumbnailRequestOptions()
+        )
+    }
+
+    func stopCachingThumbnails(
+        assets: [PHAsset],
+        targetSize: CGSize,
+        contentMode: PHImageContentMode
+    ) {
+        guard !assets.isEmpty else {
+            return
+        }
+
+        imageManager.stopCachingImages(
+            for: assets,
+            targetSize: normalizedThumbnailTargetSize(targetSize),
+            contentMode: contentMode,
+            options: thumbnailRequestOptions()
+        )
+    }
+
+    func stopCachingAllThumbnails() {
+        imageManager.stopCachingImagesForAllAssets()
     }
 
     func requestPreview(
@@ -300,5 +375,20 @@ final class PhotoImageService {
         options.isNetworkAccessAllowed = true
         options.isSynchronous = false
         return options
+    }
+
+    private func thumbnailRequestOptions() -> PHImageRequestOptions {
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .opportunistic
+        options.resizeMode = .fast
+        options.isNetworkAccessAllowed = false
+        return options
+    }
+
+    private func normalizedThumbnailTargetSize(_ targetSize: CGSize) -> CGSize {
+        CGSize(
+            width: max(1, targetSize.width.rounded()),
+            height: max(1, targetSize.height.rounded())
+        )
     }
 }

@@ -10,6 +10,10 @@ enum ScrollPerformanceDiagnostics {
     private static var sectionOffsetPreferenceCallbacks = 0
     private static var sectionOffsetValuesTotal = 0
     private static var sectionOffsetValuesMax = 0
+    private static var sectionOffsetUpdatesReceived = 0
+    private static var sectionOffsetUpdatesProcessed = 0
+    private static var sectionOffsetUpdatesCoalesced = 0
+    private static var sectionOffsetIdleFlushes = 0
     private static var visibleDateCandidates = 0
     private static var visibleDatePublished = 0
     private static var cellAppearCount = 0
@@ -26,6 +30,16 @@ enum ScrollPerformanceDiagnostics {
     private static var thumbnailFinalCommittedToUI = 0
     private static var duplicateEquivalentRequests = 0
     private static var peakInflightRequests = 0
+    private static var preheatUpdateCount = 0
+    private static var preheatAssetsAdded = 0
+    private static var preheatAssetsRemoved = 0
+    private static var preheatActiveAssets = 0
+    private static var preheatActiveAssetsPeak = 0
+    private static var preheatStartCalls = 0
+    private static var preheatStopCalls = 0
+    private static var preheatWindowResets = 0
+    private static var thumbnailRequestPreheatedCandidate = 0
+    private static var preheatedCandidateIdentifiers = Set<String>()
     private static var inflightRequests: [PHImageRequestID: String] = [:]
     private static var inflightRequestCountsByKey: [String: Int] = [:]
     private static var targetSizeDistribution: [String: Int] = [:]
@@ -44,6 +58,10 @@ enum ScrollPerformanceDiagnostics {
         sectionOffsetPreferenceCallbacks = 0
         sectionOffsetValuesTotal = 0
         sectionOffsetValuesMax = 0
+        sectionOffsetUpdatesReceived = 0
+        sectionOffsetUpdatesProcessed = 0
+        sectionOffsetUpdatesCoalesced = 0
+        sectionOffsetIdleFlushes = 0
         visibleDateCandidates = 0
         visibleDatePublished = 0
         cellAppearCount = 0
@@ -60,6 +78,16 @@ enum ScrollPerformanceDiagnostics {
         thumbnailFinalCommittedToUI = 0
         duplicateEquivalentRequests = 0
         peakInflightRequests = 0
+        preheatUpdateCount = 0
+        preheatAssetsAdded = 0
+        preheatAssetsRemoved = 0
+        preheatActiveAssets = 0
+        preheatActiveAssetsPeak = 0
+        preheatStartCalls = 0
+        preheatStopCalls = 0
+        preheatWindowResets = 0
+        thumbnailRequestPreheatedCandidate = 0
+        preheatedCandidateIdentifiers = []
         inflightRequests = [:]
         inflightRequestCountsByKey = [:]
         targetSizeDistribution = [:]
@@ -73,6 +101,26 @@ enum ScrollPerformanceDiagnostics {
         sectionOffsetPreferenceCallbacks += 1
         sectionOffsetValuesTotal += valueCount
         sectionOffsetValuesMax = max(sectionOffsetValuesMax, valueCount)
+    }
+
+    static func recordSectionOffsetUpdateReceived() {
+        guard isEnabled else { return }
+        sectionOffsetUpdatesReceived += 1
+    }
+
+    static func recordSectionOffsetUpdateProcessed() {
+        guard isEnabled else { return }
+        sectionOffsetUpdatesProcessed += 1
+    }
+
+    static func recordSectionOffsetUpdateCoalesced() {
+        guard isEnabled else { return }
+        sectionOffsetUpdatesCoalesced += 1
+    }
+
+    static func recordSectionOffsetIdleFlush() {
+        guard isEnabled else { return }
+        sectionOffsetIdleFlushes += 1
     }
 
     static func recordVisibleDateCandidate() {
@@ -108,10 +156,14 @@ enum ScrollPerformanceDiagnostics {
     static func recordThumbnailRequestStarted(
         requestID: PHImageRequestID,
         key: String,
-        targetSize: CGSize
+        targetSize: CGSize,
+        isPreheatedCandidate: Bool = false
     ) {
         guard isEnabled else { return }
         thumbnailRequestStarted += 1
+        if isPreheatedCandidate {
+            thumbnailRequestPreheatedCandidate += 1
+        }
 
         if (inflightRequestCountsByKey[key] ?? 0) > 0 {
             duplicateEquivalentRequests += 1
@@ -123,6 +175,38 @@ enum ScrollPerformanceDiagnostics {
 
         let sizeBucket = "\(Int(targetSize.width.rounded()))x\(Int(targetSize.height.rounded()))"
         targetSizeDistribution[sizeBucket, default: 0] += 1
+    }
+
+    static func isThumbnailPreheatedCandidate(_ identifier: String) -> Bool {
+        guard isEnabled else { return false }
+        return preheatedCandidateIdentifiers.contains(identifier)
+    }
+
+    static func recordPreheatUpdate(
+        addedAssets: Int,
+        removedAssets: Int,
+        activeAssets: Int,
+        startCalls: Int,
+        stopCalls: Int
+    ) {
+        guard isEnabled else { return }
+        preheatUpdateCount += 1
+        preheatAssetsAdded += addedAssets
+        preheatAssetsRemoved += removedAssets
+        preheatActiveAssets = activeAssets
+        preheatActiveAssetsPeak = max(preheatActiveAssetsPeak, activeAssets)
+        preheatStartCalls += startCalls
+        preheatStopCalls += stopCalls
+    }
+
+    static func updatePreheatedCandidateIdentifiers(_ identifiers: Set<String>) {
+        guard isEnabled else { return }
+        preheatedCandidateIdentifiers = identifiers
+    }
+
+    static func recordPreheatWindowReset() {
+        guard isEnabled else { return }
+        preheatWindowResets += 1
     }
 
     static func recordThumbnailRequestCancelled(_ requestID: PHImageRequestID?) {
@@ -214,6 +298,10 @@ enum ScrollPerformanceDiagnostics {
             section_offset_values_total=\(sectionOffsetValuesTotal)
             section_offset_values_avg=\(String(format: "%.2f", averageOffsetValues))
             section_offset_values_max=\(sectionOffsetValuesMax)
+            section_offset_updates_received=\(sectionOffsetUpdatesReceived)
+            section_offset_updates_processed=\(sectionOffsetUpdatesProcessed)
+            section_offset_updates_coalesced=\(sectionOffsetUpdatesCoalesced)
+            section_offset_idle_flushes=\(sectionOffsetIdleFlushes)
             visible_date_candidates=\(visibleDateCandidates)
             visible_date_published=\(visibleDatePublished)
             cell_appear_count=\(cellAppearCount)
@@ -231,6 +319,15 @@ enum ScrollPerformanceDiagnostics {
             duplicate_equivalent_requests=\(duplicateEquivalentRequests)
             peak_inflight_requests=\(peakInflightRequests)
             inflight_requests_at_summary=\(inflightRequests.count)
+            preheat_update_count=\(preheatUpdateCount)
+            preheat_assets_added=\(preheatAssetsAdded)
+            preheat_assets_removed=\(preheatAssetsRemoved)
+            preheat_active_assets=\(preheatActiveAssets)
+            preheat_active_assets_peak=\(preheatActiveAssetsPeak)
+            preheat_start_calls=\(preheatStartCalls)
+            preheat_stop_calls=\(preheatStopCalls)
+            preheat_window_resets=\(preheatWindowResets)
+            thumbnail_request_preheated_candidate=\(thumbnailRequestPreheatedCandidate)
             target_size_distribution=\(targetSizes.isEmpty ? "none" : targetSizes)
             """
         )
