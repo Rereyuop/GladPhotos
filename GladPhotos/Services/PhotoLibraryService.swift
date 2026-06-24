@@ -36,7 +36,13 @@ final class PhotoLibraryService: NSObject, PHPhotoLibraryChangeObserver {
     }
 
     func checkAuthorization() async {
-        updateAuthorizationState(PHPhotoLibrary.authorizationStatus(for: .readWrite))
+        var status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+
+        if status == .notDetermined {
+            status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        }
+
+        updateAuthorizationState(status)
         loadLibraryIfAuthorized()
     }
 
