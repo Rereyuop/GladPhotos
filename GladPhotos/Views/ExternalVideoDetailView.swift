@@ -3,13 +3,20 @@ import SwiftUI
 
 struct ExternalVideoDetailView: View {
     let item: ExternalMediaItem
+    let onCompressionCompleted: (URL) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
     @State private var didFinishLoading = false
     @State private var showsSourceInfo = false
     @State private var showsTrimPanel = false
+    @State private var compressionRange: VideoCompressionSheetItem?
     @StateObject private var trimState = VideoTrimState()
+
+    init(item: ExternalMediaItem, onCompressionCompleted: @escaping (URL) -> Void = { _ in }) {
+        self.item = item
+        self.onCompressionCompleted = onCompressionCompleted
+    }
 
     var body: some View {
         ZStack {
@@ -34,6 +41,15 @@ struct ExternalVideoDetailView: View {
         .navigationTitle(item.filename)
         .toolbar {
             ToolbarItemGroup {
+                Button {
+                    compressionRange = VideoCompressionSheetItem(range: .fullVideo)
+                } label: {
+                    Label("压缩", systemImage: "arrow.down.circle")
+                }
+                .help("按目标视频码率压缩完整视频")
+                .disabled(!trimState.isReady)
+                .pointingHandCursor()
+
                 Button {
                     withAnimation(.easeInOut(duration: 0.16)) {
                         showsTrimPanel.toggle()
@@ -67,7 +83,11 @@ struct ExternalVideoDetailView: View {
         }
         .overlay(alignment: .bottom) {
             if showsTrimPanel {
-                VideoTrimPanel(sourceURL: item.url, state: trimState)
+                VideoTrimPanel(
+                    sourceURL: item.url,
+                    state: trimState,
+                    onCompressionCompleted: onCompressionCompleted
+                )
                     .padding(.horizontal, 20)
                     .padding(.bottom, 18)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -99,5 +119,18 @@ struct ExternalVideoDetailView: View {
         .onExitCommand {
             dismiss()
         }
+        .sheet(item: $compressionRange) { item in
+            VideoCompressionSheet(
+                inputURL: self.item.url,
+                range: item.range,
+                totalDuration: trimState.duration,
+                onCompleted: onCompressionCompleted
+            )
+        }
     }
+}
+
+private struct VideoCompressionSheetItem: Identifiable {
+    let id = UUID()
+    let range: VideoCompressionRange
 }

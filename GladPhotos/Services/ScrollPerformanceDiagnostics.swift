@@ -7,17 +7,12 @@ import Photos
 enum ScrollPerformanceDiagnostics {
     private static let enabledKey = "GladPhotos.scrollDiagnostics.enabled"
 
-    private static var sectionOffsetPreferenceCallbacks = 0
-    private static var sectionOffsetValuesTotal = 0
-    private static var sectionOffsetValuesMax = 0
-    private static var sectionOffsetUpdatesReceived = 0
-    private static var sectionOffsetUpdatesProcessed = 0
-    private static var sectionOffsetUpdatesCoalesced = 0
-    private static var sectionOffsetIdleFlushes = 0
     private static var visibleDateCandidates = 0
     private static var visibleDatePublished = 0
-    private static var cellAppearCount = 0
-    private static var cellDisappearCount = 0
+    private static var nativeCollectionItemsCreated = 0
+    private static var nativeCollectionItemsReused = 0
+    private static var nativeCollectionMaxVisibleItems = 0
+    private static var nativeCollectionReloadDataCount = 0
     private static var thumbnailRequestStarted = 0
     private static var thumbnailRequestCancelled = 0
     private static var thumbnailDegradedResults = 0
@@ -39,7 +34,6 @@ enum ScrollPerformanceDiagnostics {
     private static var preheatStopCalls = 0
     private static var preheatWindowResets = 0
     private static var preheatVisibleEventCount = 0
-    private static var preheatParentViewStateMutations = 0
     private static var preheatIndexRebuildCount = 0
     private static var preheatComputationCount = 0
     private static var preheatWindowUnchangedSkips = 0
@@ -60,17 +54,12 @@ enum ScrollPerformanceDiagnostics {
     }
 
     static func reset(reason: String = "manual") {
-        sectionOffsetPreferenceCallbacks = 0
-        sectionOffsetValuesTotal = 0
-        sectionOffsetValuesMax = 0
-        sectionOffsetUpdatesReceived = 0
-        sectionOffsetUpdatesProcessed = 0
-        sectionOffsetUpdatesCoalesced = 0
-        sectionOffsetIdleFlushes = 0
         visibleDateCandidates = 0
         visibleDatePublished = 0
-        cellAppearCount = 0
-        cellDisappearCount = 0
+        nativeCollectionItemsCreated = 0
+        nativeCollectionItemsReused = 0
+        nativeCollectionMaxVisibleItems = 0
+        nativeCollectionReloadDataCount = 0
         thumbnailRequestStarted = 0
         thumbnailRequestCancelled = 0
         thumbnailDegradedResults = 0
@@ -92,7 +81,6 @@ enum ScrollPerformanceDiagnostics {
         preheatStopCalls = 0
         preheatWindowResets = 0
         preheatVisibleEventCount = 0
-        preheatParentViewStateMutations = 0
         preheatIndexRebuildCount = 0
         preheatComputationCount = 0
         preheatWindowUnchangedSkips = 0
@@ -106,33 +94,6 @@ enum ScrollPerformanceDiagnostics {
         print("DEBUG ScrollDiagnostics reset reason=\(reason)")
     }
 
-    static func recordSectionOffsetPreference(valueCount: Int) {
-        guard isEnabled else { return }
-        sectionOffsetPreferenceCallbacks += 1
-        sectionOffsetValuesTotal += valueCount
-        sectionOffsetValuesMax = max(sectionOffsetValuesMax, valueCount)
-    }
-
-    static func recordSectionOffsetUpdateReceived() {
-        guard isEnabled else { return }
-        sectionOffsetUpdatesReceived += 1
-    }
-
-    static func recordSectionOffsetUpdateProcessed() {
-        guard isEnabled else { return }
-        sectionOffsetUpdatesProcessed += 1
-    }
-
-    static func recordSectionOffsetUpdateCoalesced() {
-        guard isEnabled else { return }
-        sectionOffsetUpdatesCoalesced += 1
-    }
-
-    static func recordSectionOffsetIdleFlush() {
-        guard isEnabled else { return }
-        sectionOffsetIdleFlushes += 1
-    }
-
     static func recordVisibleDateCandidate() {
         guard isEnabled else { return }
         visibleDateCandidates += 1
@@ -143,14 +104,17 @@ enum ScrollPerformanceDiagnostics {
         visibleDatePublished += 1
     }
 
-    static func recordCellAppear() {
+    static func recordNativeCollectionStats(
+        createdItems: Int,
+        reusedItems: Int,
+        maxVisibleItems: Int,
+        reloadDataCount: Int
+    ) {
         guard isEnabled else { return }
-        cellAppearCount += 1
-    }
-
-    static func recordCellDisappear() {
-        guard isEnabled else { return }
-        cellDisappearCount += 1
+        nativeCollectionItemsCreated = max(nativeCollectionItemsCreated, createdItems)
+        nativeCollectionItemsReused = max(nativeCollectionItemsReused, reusedItems)
+        nativeCollectionMaxVisibleItems = max(nativeCollectionMaxVisibleItems, maxVisibleItems)
+        nativeCollectionReloadDataCount = max(nativeCollectionReloadDataCount, reloadDataCount)
     }
 
     static func makeThumbnailRequestKey(
@@ -222,11 +186,6 @@ enum ScrollPerformanceDiagnostics {
     static func recordPreheatVisibleEvent() {
         guard isEnabled else { return }
         preheatVisibleEventCount += 1
-    }
-
-    static func recordPreheatParentViewStateMutation() {
-        guard isEnabled else { return }
-        preheatParentViewStateMutations += 1
     }
 
     static func recordPreheatIndexRebuild() {
@@ -314,9 +273,6 @@ enum ScrollPerformanceDiagnostics {
         }
 
         let duration = scenarioStartedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let averageOffsetValues = sectionOffsetPreferenceCallbacks == 0
-            ? 0
-            : Double(sectionOffsetValuesTotal) / Double(sectionOffsetPreferenceCallbacks)
         let targetSizes = targetSizeDistribution
             .sorted { lhs, rhs in
                 if lhs.value == rhs.value { return lhs.key < rhs.key }
@@ -329,18 +285,12 @@ enum ScrollPerformanceDiagnostics {
             """
             DEBUG ScrollDiagnostics summary reason=\(reason)
             duration_seconds=\(String(format: "%.2f", duration))
-            section_offset_preference_callbacks=\(sectionOffsetPreferenceCallbacks)
-            section_offset_values_total=\(sectionOffsetValuesTotal)
-            section_offset_values_avg=\(String(format: "%.2f", averageOffsetValues))
-            section_offset_values_max=\(sectionOffsetValuesMax)
-            section_offset_updates_received=\(sectionOffsetUpdatesReceived)
-            section_offset_updates_processed=\(sectionOffsetUpdatesProcessed)
-            section_offset_updates_coalesced=\(sectionOffsetUpdatesCoalesced)
-            section_offset_idle_flushes=\(sectionOffsetIdleFlushes)
             visible_date_candidates=\(visibleDateCandidates)
             visible_date_published=\(visibleDatePublished)
-            cell_appear_count=\(cellAppearCount)
-            cell_disappear_count=\(cellDisappearCount)
+            native_collection_items_created=\(nativeCollectionItemsCreated)
+            native_collection_items_reused=\(nativeCollectionItemsReused)
+            native_collection_max_visible_items=\(nativeCollectionMaxVisibleItems)
+            native_collection_reload_data_count=\(nativeCollectionReloadDataCount)
             thumbnail_request_started=\(thumbnailRequestStarted)
             thumbnail_request_cancelled=\(thumbnailRequestCancelled)
             thumbnail_degraded_results=\(thumbnailDegradedResults)
@@ -363,7 +313,6 @@ enum ScrollPerformanceDiagnostics {
             preheat_stop_calls=\(preheatStopCalls)
             preheat_window_resets=\(preheatWindowResets)
             preheat_visible_event_count=\(preheatVisibleEventCount)
-            preheat_parent_view_state_mutations=\(preheatParentViewStateMutations)
             preheat_index_rebuild_count=\(preheatIndexRebuildCount)
             preheat_computation_count=\(preheatComputationCount)
             preheat_window_unchanged_skips=\(preheatWindowUnchangedSkips)

@@ -3,7 +3,19 @@ import SwiftUI
 struct VideoTrimPanel: View {
     let sourceURL: URL
     @ObservedObject var state: VideoTrimState
+    let onCompressionCompleted: (URL) -> Void
     @StateObject private var exporter = VideoTrimExportService()
+    @State private var compressionRange: VideoCompressionSheetItem?
+
+    init(
+        sourceURL: URL,
+        state: VideoTrimState,
+        onCompressionCompleted: @escaping (URL) -> Void = { _ in }
+    ) {
+        self.sourceURL = sourceURL
+        self.state = state
+        self.onCompressionCompleted = onCompressionCompleted
+    }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -36,6 +48,15 @@ struct VideoTrimPanel: View {
                 }
                 .disabled(!state.isReady || exporter.isExporting)
                 .buttonStyle(.borderedProminent)
+                .pointingHandCursor()
+
+                Button("导出压缩片段") {
+                    compressionRange = VideoCompressionSheetItem(
+                        range: .clip(start: state.startTime, end: state.endTime)
+                    )
+                }
+                .disabled(!state.isReady || exporter.isExporting)
+                .buttonStyle(.bordered)
                 .pointingHandCursor()
             }
 
@@ -71,7 +92,20 @@ struct VideoTrimPanel: View {
                 .stroke(.white.opacity(0.14))
         }
         .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
+        .sheet(item: $compressionRange) { item in
+            VideoCompressionSheet(
+                inputURL: sourceURL,
+                range: item.range,
+                totalDuration: state.duration,
+                onCompleted: onCompressionCompleted
+            )
+        }
     }
+}
+
+private struct VideoCompressionSheetItem: Identifiable {
+    let id = UUID()
+    let range: VideoCompressionRange
 }
 
 private struct PreciseTimeField: View {

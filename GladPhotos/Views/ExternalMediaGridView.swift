@@ -456,7 +456,10 @@ struct ExternalMediaGridView: View {
                         deleteItem: deleteItem
                     )
                 case .video:
-                    ExternalVideoDetailView(item: item)
+                    ExternalVideoDetailView(
+                        item: item,
+                        onCompressionCompleted: { _ in refresh() }
+                    )
                 }
             }
         }
